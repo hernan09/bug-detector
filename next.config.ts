@@ -7,5 +7,9 @@ const config = {
 export default withPWA({
   dest: 'public',
   register: true,
-  skipWaiting: true,
+  // Configuración adicional de PWA
+  disable: process.env.NODE_ENV === 'development',
+  workboxOptions: {
+    disableDevLogs: true,
+  }
 })(config);
