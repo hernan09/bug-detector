@@ -7,32 +7,57 @@ interface CameraProps {
 export default function Camera({ onFrame }: CameraProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const [error, setError] = useState<string>('');
   const [isCameraAvailable, setIsCameraAvailable] = useState<boolean>(false);
   const [permissionStatus, setPermissionStatus] = useState<'prompt' | 'granted' | 'denied'>('prompt');
 
+  const stopCurrentStream = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+  };
+
   const requestCameraPermission = async () => {
     try {
+      // Detener cualquier stream existente
+      stopCurrentStream();
+
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode: 'environment',
+          facingMode: { ideal: 'environment' },
           width: { ideal: 1280 },
           height: { ideal: 720 }
         }
       });
 
+      streamRef.current = stream;
+      
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         setPermissionStatus('granted');
         setError('');
+        
+        // Guardar el estado del permiso
+        try {
+          localStorage.setItem('cameraPermission', 'granted');
+        } catch (e) {
+          console.warn('No se pudo guardar el estado del permiso:', e);
+        }
       }
     } catch (err) {
       console.error('Error accessing camera:', err);
       if ((err as Error).name === 'NotAllowedError') {
         setPermissionStatus('denied');
-        setError('Acceso a la cámara denegado. Por favor, permite el acceso en la configuración de tu navegador.');
+        setError('Acceso a la cámara denegado. Por favor, permite el acceso en la configuración de tu dispositivo.');
+        try {
+          localStorage.setItem('cameraPermission', 'denied');
+        } catch (e) {
+          console.warn('No se pudo guardar el estado del permiso:', e);
+        }
       } else {
-        setError('Error al acceder a la cámara. Por favor, recarga la página o intenta en otro navegador.');
+        setError('Error al acceder a la cámara. Por favor, recarga la página o verifica los permisos del sistema.');
       }
     }
   };
@@ -40,12 +65,19 @@ export default function Camera({ onFrame }: CameraProps) {
   useEffect(() => {
     async function checkCameraAvailability() {
       try {
+        // Intentar recuperar el estado guardado del permiso
+        const savedPermission = localStorage.getItem('cameraPermission');
+        if (savedPermission === 'granted') {
+          await requestCameraPermission();
+          return;
+        }
+
         const devices = await navigator.mediaDevices.enumerateDevices();
         const hasCamera = devices.some(device => device.kind === 'videoinput');
         setIsCameraAvailable(hasCamera);
         
         if (!hasCamera) {
-          setError('No se detectó ninguna cámara. Por favor, conecta una cámara o usa un dispositivo móvil.');
+          setError('No se detectó ninguna cámara. Por favor, verifica que tu dispositivo tenga una cámara disponible.');
           return;
         }
 
@@ -54,23 +86,28 @@ export default function Camera({ onFrame }: CameraProps) {
           const permission = await navigator.permissions.query({ name: 'camera' as PermissionName });
           setPermissionStatus(permission.state as 'prompt' | 'granted' | 'denied');
           
+          // Escuchar cambios en el permiso
+          permission.addEventListener('change', () => {
+            setPermissionStatus(permission.state as 'prompt' | 'granted' | 'denied');
+            if (permission.state === 'granted') {
+              requestCameraPermission();
+            }
+          });
+
           if (permission.state === 'granted') {
             requestCameraPermission();
           }
         }
       } catch (err) {
         console.error('Error checking camera:', err);
-        setError('Error al verificar la cámara. Por favor, usa un navegador moderno.');
+        setError('Error al verificar la cámara. Por favor, asegúrate de que tu navegador tenga acceso a la cámara.');
       }
     }
 
     checkCameraAvailability();
 
     return () => {
-      if (videoRef.current?.srcObject) {
-        const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
-        tracks.forEach(track => track.stop());
-      }
+      stopCurrentStream();
     };
   }, []);
 
@@ -118,7 +155,7 @@ export default function Camera({ onFrame }: CameraProps) {
               <h3 className="text-sm font-medium text-red-800">No hay cámara disponible</h3>
               <p className="mt-2 text-sm text-red-700">
                 Esta aplicación requiere una cámara para funcionar. 
-                Por favor, usa un dispositivo con cámara o conecta una webcam.
+                Por favor, verifica que tu dispositivo tenga una cámara disponible.
               </p>
             </div>
           </div>
@@ -163,19 +200,22 @@ export default function Camera({ onFrame }: CameraProps) {
             </svg>
             <h3 className="text-lg font-medium text-yellow-800 mb-2">Acceso a la cámara bloqueado</h3>
             <p className="text-sm text-yellow-700 mb-4">
-              Has bloqueado el acceso a la cámara. Para usar la aplicación:
+              Para usar la cámara en este dispositivo:
               <br />
-              1. Haz clic en el ícono de cámara/candado en la barra de direcciones
+              1. Ve a Configuración &gt; Aplicaciones &gt; Permisos
               <br />
-              2. Permite el acceso a la cámara
+              2. Busca esta aplicación y permite el acceso a la cámara
               <br />
-              3. Recarga la página
+              3. Vuelve aquí y presiona el botón de recargar
             </p>
             <button
-              onClick={() => window.location.reload()}
+              onClick={() => {
+                stopCurrentStream();
+                window.location.reload();
+              }}
               className="bg-yellow-500 hover:bg-yellow-600 text-white font-medium py-2 px-4 rounded-lg transition-colors"
             >
-              Recargar página
+              Recargar aplicación
             </button>
           </div>
         </div>
@@ -196,6 +236,11 @@ export default function Camera({ onFrame }: CameraProps) {
         ref={canvasRef}
         className="hidden"
       />
+      {error && (
+        <div className="absolute top-0 left-0 right-0 bg-red-500 text-white p-2 text-center rounded-t-lg">
+          {error}
+        </div>
+      )}
     </div>
   );
 } 
